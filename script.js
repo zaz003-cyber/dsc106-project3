@@ -4,13 +4,15 @@ const summaryFile = "data/crop_zone_summary.csv";
 const measureLabels = {
   precip_intensity: "Overall Precipitation Proxy",
   rain_proxy: "Rain Proxy",
-  snow_proxy: "Snow Proxy"
+  snow_proxy: "Snow Proxy",
+  crop_density: "Cropland Density"
 };
 
 const summaryColumns = {
   precip_intensity: "avg_precip",
   rain_proxy: "avg_rain",
-  snow_proxy: "avg_snow"
+  snow_proxy: "avg_snow",
+  crop_density: "avg_crop_density"
 };
 
 const colorScale = d3.scaleOrdinal()
@@ -23,6 +25,43 @@ let pointsData;
 let summaryData;
 
 let currentMetric = "precip_intensity";
+
+const mapLayerInterpolators = {
+  precip_intensity: t => d3.interpolate("#ffe8cc", "#a50026")(t),
+  rain_proxy: t => d3.interpolate("#80dfff", "#00204d")(t),
+  snow_proxy: t => d3.interpolate("#b3b3b3", "#1f4788")(t),
+  crop_density: t => d3.interpolate("#d9f0d3", "#00441b")(t)
+};
+
+let usTopoCached = null;
+let usTopoPromise = null;
+let usLandCached = null;
+let pointsInUSComputed = false;
+
+function showMapSkeleton() {
+  const container = d3.select("#map");
+  if (container.select(".map-skeleton").empty()) {
+    const skel = container.append("div").attr("class", "map-skeleton");
+    skel.append("div").attr("class", "map-skeleton__spinner");
+    skel.append("div").attr("class", "map-skeleton__label").text("Loading map…");
+  }
+}
+
+function hideMapSkeleton() {
+  const skel = d3.select("#map").select(".map-skeleton");
+  if (!skel.empty()) {
+    skel.classed("is-hidden", true);
+    setTimeout(() => skel.remove(), 400);
+  }
+}
+
+function loadUsTopo() {
+  if (usTopoCached) return Promise.resolve(usTopoCached);
+  if (usTopoPromise) return usTopoPromise;
+  usTopoPromise = d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json")
+    .then(us => { usTopoCached = us; return us; });
+  return usTopoPromise;
+}
 
 Promise.all([
   d3.csv(pointFile, d => ({
@@ -51,14 +90,14 @@ Promise.all([
   pointsData = points;
   summaryData = summary;
 
+  updateMapTitle();
   drawViolinPlot();
   drawBarChart();
+  drawMap();
 
   d3.select("#measure-select")
     .on("change", function() {
-
       currentMetric = this.value;
-
       updateCharts();
     });
 
@@ -67,8 +106,10 @@ Promise.all([
 });
 
 function updateCharts() {
+  updateMapTitle();
   drawViolinPlot();
   drawBarChart();
+  drawMap();
 }
 
 function getCurrentMeasure() {
@@ -89,96 +130,26 @@ function getFilteredPoints() {
   return pointsData.filter(d => d.crop_zone === selectedZone);
 }
 
-// function drawScatterplot() {
-//   const measure = getCurrentMeasure();
-//   const filtered = getFilteredPoints();
+function updateMapTitle() {
+  const measure = getCurrentMeasure();
 
-//   d3.select("#scatterplot").selectAll("*").remove();
+  const titleMap = {
+    precip_intensity: "Overall Precipitation Across the United States Mainland",
+    rain_proxy: "Rain Intensity Across the United States Mainland",
+    snow_proxy: "Snow Intensity Across the United States Mainland",
+    crop_density: "Cropland Density Across the United States Mainland"
+  };
 
-//   const margin = { top: 40, right: 30, bottom: 70, left: 75 };
-//   const outerWidth = 720;
-//   const outerHeight = 500;
-//   const width = outerWidth - margin.left - margin.right;
-//   const height = outerHeight - margin.top - margin.bottom;
+  const descriptionMap = {
+    precip_intensity: "This map shows the spatial distribution of data points colored by overall precipitation intensity. Darker shades indicate higher precipitation values on a yellow-to-red scale.",
+    rain_proxy: "This map shows the spatial distribution of data points colored by rain intensity. Darker shades indicate higher rain values on a blue scale.",
+    snow_proxy: "This map shows the spatial distribution of data points colored by snow intensity. Darker shades indicate higher snow values on a grey-to-blue scale.",
+    crop_density: "This map shows the spatial distribution of data points colored by cropland density. Darker shades indicate higher crop density values on a green scale."
+  };
 
-//   const svg = d3.select("#scatterplot")
-//     .append("svg")
-//     .attr("viewBox", `0 0 ${outerWidth} ${outerHeight}`);
-
-//   const g = svg.append("g")
-//     .attr("transform", `translate(${margin.left},${margin.top})`);
-
-//   const xMax = d3.max(pointsData, d => d[measure]) || 1;
-
-//   const x = d3.scaleLinear()
-//     .domain([0, xMax])
-//     .nice()
-//     .range([0, width]);
-
-//   const y = d3.scaleLinear()
-//     .domain([0, 255])
-//     .nice()
-//     .range([height, 0]);
-
-//   g.append("g")
-//     .attr("transform", `translate(0,${height})`)
-//     .call(d3.axisBottom(x));
-
-//   g.append("g")
-//     .call(d3.axisLeft(y));
-
-//   g.append("text")
-//     .attr("class", "axis-label")
-//     .attr("x", width / 2)
-//     .attr("y", height + 48)
-//     .attr("text-anchor", "middle")
-//     .text(measureLabels[measure]);
-
-//   g.append("text")
-//     .attr("class", "axis-label")
-//     .attr("transform", "rotate(-90)")
-//     .attr("x", -height / 2)
-//     .attr("y", -52)
-//     .attr("text-anchor", "middle")
-//     .text("Cropland Density Proxy");
-
-//   g.selectAll("circle")
-//     .data(filtered)
-//     .join("circle")
-//     .attr("cx", d => x(d[measure]))
-//     .attr("cy", d => y(d.crop_density))
-//     .attr("r", 3)
-//     .attr("fill", d => colorScale(d.crop_zone))
-//     .attr("opacity", 0.45)
-//     .on("mouseover", function(event, d) {
-//       d3.select(this)
-//         .attr("r", 6)
-//         .attr("opacity", 0.9);
-
-//       tooltip
-//         .style("opacity", 1)
-//         .html(`
-//           <strong>${d.crop_zone}</strong><br>
-//           ${measureLabels[measure]}: ${d[measure].toFixed(2)}<br>
-//           Crop Density Proxy: ${d.crop_density.toFixed(2)}<br>
-//           Lon: ${d.lon.toFixed(2)}, Lat: ${d.lat.toFixed(2)}
-//         `);
-//     })
-//     .on("mousemove", function(event) {
-//       tooltip
-//         .style("left", `${event.pageX + 14}px`)
-//         .style("top", `${event.pageY - 28}px`);
-//     })
-//     .on("mouseout", function() {
-//       d3.select(this)
-//         .attr("r", 3)
-//         .attr("opacity", 0.45);
-
-//       tooltip.style("opacity", 0);
-//     });
-
-//   drawLegend(svg, outerWidth - 205, 28);
-// }
+  d3.select("#map-title").text(titleMap[measure]);
+  d3.select("#map-description").text(descriptionMap[measure]);
+}
 
 function kernelDensityEstimator(kernel, X) {
     return function(V) {
@@ -224,10 +195,12 @@ function drawViolinPlot() {
     const width = 620 - margin.left - margin.right;
     const height = 420 - margin.top - margin.bottom;
 
+    const outerWidth = width + margin.left + margin.right;
+    const outerHeight = height + margin.top + margin.bottom;
     const svg = d3.select("#violinplot")
         .append("svg")
-        .attr("width", width + margin.left + margin.right)
-        .attr("height", height + margin.top + margin.bottom)
+        .attr("viewBox", `0 0 ${outerWidth} ${outerHeight}`)
+        .attr("preserveAspectRatio", "xMidYMid meet")
         .append("g")
         .attr("transform",
             `translate(${margin.left},${margin.top})`);
@@ -366,45 +339,7 @@ function drawViolinPlot() {
         tooltip.style("opacity", 0);
     });
 
-    // svg.selectAll(".points")
-    // .data(data)
-    // .join("circle")
-    // .attr("cx", d =>
-    //     x(d.crop_zone)
-    //     + x.bandwidth()/2
-    //     + (Math.random() - 0.5) * 20
-    // )
-    // .attr("cy", d => y(+d[selectedMetric]))
-    // .attr("r", 2)
-    // .style("fill", "black")
-    // .style("opacity", 0.3)
-
-    // .on("mouseover", function(event, d) {
-    //   d3.select(this)
-    //     .style("fill", "orange");
-
-    //   tooltip
-    //     .style("opacity", 1)
-    //     .html(`
-    //       <strong>${d.crop_zone}</strong><br>
-    //       ${measureLabels[selectedMetric]}: ${d[selectedMetric].toFixed(2)}<br>
-    //       Crop Density Proxy: ${d.crop_density.toFixed(2)}<br>
-    //       Lon: ${d.lon.toFixed(2)}, Lat: ${d.lat.toFixed(2)}
-    //     `);
-    // })
-    // .on("mousemove", function(event) {
-    //   tooltip
-    //     .style("left", `${event.pageX + 14}px`)
-    //     .style("top", `${event.pageY - 28}px`);
-    // })
-    // .on("mouseout", function(event, d) {
-
-    // d3.select(this)
-    //     .style("fill", "black");
-
-    // });
-
-  drawLegend(svg, width - 30, -10);
+  drawLegend(svg, 30, -22);
 
 
 }
@@ -412,6 +347,7 @@ function drawViolinPlot() {
 
 function drawLegend(svg, x, y) {
   const zones = ["Non-Agricultural", "Sparse Crops", "Intense Cropland"];
+  const itemWidth = 155;
 
   const legend = svg.append("g")
     .attr("class", "legend")
@@ -419,22 +355,22 @@ function drawLegend(svg, x, y) {
 
   legend.append("rect")
     .attr("x", -10)
-    .attr("y", -18)
-    .attr("width", 170)
-    .attr("height", 84)
+    .attr("y", -12)
+    .attr("width", itemWidth * zones.length + 10)
+    .attr("height", 22)
     .attr("rx", 8)
     .attr("fill", "white")
     .attr("opacity", 0.85);
 
   zones.forEach((zone, i) => {
-    const row = legend.append("g")
-      .attr("transform", `translate(0,${i * 22})`);
+    const item = legend.append("g")
+      .attr("transform", `translate(${i * itemWidth},0)`);
 
-    row.append("circle")
+    item.append("circle")
       .attr("r", 6)
       .attr("fill", colorScale(zone));
 
-    row.append("text")
+    item.append("text")
       .attr("x", 12)
       .attr("y", 4)
       .text(zone);
@@ -535,4 +471,185 @@ function drawBarChart() {
     .attr("y", d => y(d[summaryCol]) - 8)
     .attr("text-anchor", "middle")
     .text(d => d[summaryCol].toFixed(1));
+}
+
+function drawMap() {
+  const measure = getCurrentMeasure();
+  const data = getFilteredPoints();
+
+  if (!data.length) return;
+
+  const mapWidth = 900;
+  const mapHeight = 550;
+
+  d3.select("#map").selectAll("svg").remove();
+  showMapSkeleton();
+
+  console.log("drawMap() called with measure:", measure);
+
+  loadUsTopo().then(us => {
+    console.log("TopoJSON loaded:", us);
+
+    const svg = d3.select("#map")
+      .append("svg")
+      .attr("width", mapWidth)
+      .attr("height", mapHeight)
+      .attr("viewBox", `0 0 ${mapWidth} ${mapHeight}`)
+      .attr("class", "map-svg");
+
+    const usStates = topojson.feature(us, us.objects.states);
+    console.log("US States feature:", usStates);
+
+    if (!usLandCached) {
+      usLandCached = topojson.merge(us, us.objects.states.geometries);
+    }
+    if (!pointsInUSComputed) {
+      pointsData.forEach(p => {
+        p._inUS = d3.geoContains(usLandCached, [p.lon, p.lat]);
+      });
+      pointsInUSComputed = true;
+    }
+
+    const projection = d3.geoAlbersUsa()
+      .fitSize([mapWidth, mapHeight], usStates);
+
+    const path = d3.geoPath().projection(projection);
+
+    svg.append("g")
+      .attr("class", "states")
+      .selectAll("path")
+      .data(usStates.features)
+      .join("path")
+      .attr("d", path)
+      .attr("class", "state");
+
+    console.log("States drawn. Total states:", usStates.features.length);
+
+    const values = data
+      .filter(d => d._inUS)
+      .map(d => +d[measure])
+      .filter(v => !isNaN(v));
+
+    const minVal = d3.min(values);
+    const maxVal = d3.max(values);
+
+    console.log("Color scale domain:", minVal, "to", maxVal);
+
+    const colorScale = d3.scaleSequential()
+      .domain([minVal, maxVal])
+      .interpolator(mapLayerInterpolators[measure] || d3.interpolateYlOrRd);
+
+    const projectedPoints = data
+      .map(d => {
+        if (!d._inUS) return null;
+        const coords = projection([d.lon, d.lat]);
+        return coords && Array.isArray(coords) ? { ...d, proj: coords, mapValue: +d[measure] } : null;
+      })
+      .filter(d => {
+        if (!d || !Array.isArray(d.proj)) return false;
+        const x = d.proj[0];
+        const y = d.proj[1];
+        return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= mapWidth && y >= 0 && y <= mapHeight;
+      });
+
+    const pointsGroup = svg.append("g")
+      .attr("class", "data-points");
+
+    pointsGroup.selectAll("circle")
+      .data(projectedPoints)
+      .join("circle")
+      .attr("cx", d => d.proj[0])
+      .attr("cy", d => d.proj[1])
+      .attr("r", 1.5)
+      .attr("fill", d => colorScale(d.mapValue))
+      .attr("opacity", 0.55)
+      .on("mouseover", function(event, d) {
+        d3.select(this)
+          .attr("r", 5)
+          .attr("opacity", 1);
+
+        tooltip
+          .style("opacity", 1)
+          .html(`
+            <strong>${measureLabels[measure]}: ${d.mapValue.toFixed(2)}</strong><br>
+            Crop Zone: ${d.crop_zone}<br>
+            Lon: ${d.lon.toFixed(2)}, Lat: ${d.lat.toFixed(2)}<br>
+            Crop Density: ${d.crop_density.toFixed(0)}
+          `);
+      })      .on("mousemove", function(event) {
+        tooltip
+          .style("left", `${event.pageX + 14}px`)
+          .style("top", `${event.pageY - 28}px`);
+      })
+      .on("mouseout", function() {
+        d3.select(this)
+          .attr("r", 1.5)
+          .attr("opacity", 0.55);
+
+        tooltip.style("opacity", 0);
+      });
+
+    const legendWidth = 200;
+    const legendHeight = 12;
+    const legendX = mapWidth / 2 - legendWidth / 2 + 55;
+    const legendY = 20;
+
+    const defs = svg.append("defs");
+    const gradient = defs.append("linearGradient")
+      .attr("id", "legend-gradient")
+      .attr("x1", "0%")
+      .attr("x2", "100%");
+
+    const interp = mapLayerInterpolators[measure] || d3.interpolateYlOrRd;
+    const numStops = 10;
+    for (let i = 0; i <= numStops; i++) {
+      const t = i / numStops;
+      gradient.append("stop")
+        .attr("offset", `${t * 100}%`)
+        .attr("stop-color", interp(t));
+    }
+
+    svg.append("text")
+      .attr("class", "legend-title")
+      .attr("x", legendX + legendWidth / 2)
+      .attr("y", legendY - 8)
+      .text(`${measureLabels[measure]} Scale`);
+
+    svg.append("rect")
+      .attr("class", "legend-bar")
+      .attr("x", legendX)
+      .attr("y", legendY)
+      .attr("width", legendWidth)
+      .attr("height", legendHeight)
+      .attr("fill", "url(#legend-gradient)")
+      .attr("stroke", "#999")
+      .attr("stroke-width", 1);
+
+    const legendScale = d3.scaleLinear()
+      .domain([minVal, maxVal])
+      .range([legendX, legendX + legendWidth]);
+
+    svg.append("text")
+      .attr("class", "legend-label")
+      .attr("x", legendX)
+      .attr("y", legendY + legendHeight + 15)
+      .attr("text-anchor", "start")
+      .text(minVal.toFixed(1));
+
+    svg.append("text")
+      .attr("class", "legend-label")
+      .attr("x", legendX + legendWidth)
+      .attr("y", legendY + legendHeight + 15)
+      .attr("text-anchor", "end")
+      .text(maxVal.toFixed(1));
+
+    console.log("Map rendered successfully with", data.length, "data points");
+
+    requestAnimationFrame(() => svg.classed("is-ready", true));
+    hideMapSkeleton();
+
+  }).catch(error => {
+    console.error("Error loading TopoJSON:", error);
+    hideMapSkeleton();
+  });
 }
